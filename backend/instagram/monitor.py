@@ -1,7 +1,7 @@
 import asyncio
 import logging
-import time
 from datetime import datetime
+from functools import partial
 from typing import Optional
 
 from services.config_service import get_config
@@ -9,6 +9,11 @@ from services.conversation_service import log_conversation, log_activity
 from agent.instagram_agent import generate_greeting, generate_like_comment
 
 logger = logging.getLogger(__name__)
+
+
+def _run_sync(func, *args, **kwargs):
+    """Helper to run a sync function in a thread pool."""
+    return asyncio.to_thread(partial(func, *args, **kwargs))
 
 
 class InstagramMonitor:
@@ -46,8 +51,8 @@ class InstagramMonitor:
         # Validate config
         api_mode = config.get("api_mode", "instagrapi")
         if api_mode == "instagrapi":
-            if not config.get("ig_username") or not config.get("ig_password"):
-                return {"status": "error", "message": "Instagram username/password not configured"}
+            if not config.get("ig_username") or (not config.get("ig_password") and not config.get("ig_session")):
+                return {"status": "error", "message": "Instagram credentials not configured. Use the local login script to import a session."}
         else:
             if not config.get("access_token"):
                 return {"status": "error", "message": "Instagram access token not configured"}
@@ -57,7 +62,7 @@ class InstagramMonitor:
 
         self._running = True
         self._task = asyncio.create_task(self._poll_loop())
-        log_activity("info", "Monitor started", f"Polling every {self.interval}s")
+        await asyncio.to_thread(log_activity, "info", "Monitor started", f"Polling every {self.interval}s")
         return {"status": "started"}
 
     async def stop(self):
@@ -69,7 +74,7 @@ class InstagramMonitor:
             except asyncio.CancelledError:
                 pass
             self._task = None
-        log_activity("info", "Monitor stopped")
+        await asyncio.to_thread(log_activity, "info", "Monitor stopped")
         return {"status": "stopped"}
 
     async def _poll_loop(self):
@@ -88,7 +93,10 @@ class InstagramMonitor:
             except Exception as e:
                 self.errors += 1
                 logger.error(f"Monitor poll error: {e}")
-                log_activity("error", f"Poll error: {str(e)}")
+                try:
+                    await asyncio.to_thread(log_activity, "error", f"Poll error: {str(e)}")
+                except Exception:
+                    pass
 
             await asyncio.sleep(self.interval)
 
@@ -96,7 +104,7 @@ class InstagramMonitor:
         """Detect new followers and send greeting DMs."""
         config = get_config()
         if config.get("api_mode") != "instagrapi":
-            log_activity("info", "Follower check skipped - Graph API doesn't support follower list")
+            await asyncio.to_thread(log_activity, "info", "Follower check skipped - Graph API doesn't support follower list")
             return
 
         try:
@@ -104,69 +112,80 @@ class InstagramMonitor:
             from database import engine
             from sqlalchemy import text
 
-            client = get_client(config["ig_username"], config["ig_password"])
-            account_info = get_account_info(client)
+            session_data = config.get("ig_session", "")
+            client = await asyncio.to_thread(
+                get_client, config["ig_username"], config["ig_password"], session_data
+            )
+            account_info = await asyncio.to_thread(get_account_info, client)
             user_id = account_info["user_id"]
 
             # Get current followers (limited to avoid rate limits)
-            current_followers = get_followers(client, user_id, amount=30)
+            current_followers = await asyncio.to_thread(get_followers, client, user_id, 30)
 
-            with engine.connect() as conn:
-                # Get known followers
-                result = conn.execute(text("SELECT instagram_user_id FROM known_followers"))
-                known_ids = {row[0] for row in result.fetchall()}
+            def _db_get_known_followers():
+                with engine.connect() as conn:
+                    result = conn.execute(text("SELECT instagram_user_id FROM known_followers"))
+                    return {row[0] for row in result.fetchall()}
 
-                new_count = 0
-                for follower in current_followers:
-                    fid = follower["user_id"]
-                    if fid not in known_ids:
-                        # New follower detected!
-                        username = follower.get("username", "")
-                        new_count += 1
-                        self.new_followers_detected += 1
+            known_ids = await asyncio.to_thread(_db_get_known_followers)
 
-                        # Insert into known followers
-                        conn.execute(
-                            text("INSERT INTO known_followers (instagram_user_id, instagram_username) VALUES (:uid, :uname) ON CONFLICT DO NOTHING"),
-                            {"uid": fid, "uname": username},
-                        )
+            new_count = 0
+            for follower in current_followers:
+                fid = follower["user_id"]
+                if fid not in known_ids:
+                    # New follower detected!
+                    username = follower.get("username", "")
+                    new_count += 1
+                    self.new_followers_detected += 1
 
-                        # Generate and send greeting
-                        greeting = generate_greeting(username)
-                        dm_success = send_dm(client, [fid], greeting)
+                    # Insert into known followers
+                    def _db_insert_follower(uid, uname):
+                        with engine.connect() as conn:
+                            conn.execute(
+                                text("INSERT INTO known_followers (instagram_user_id, instagram_username) VALUES (:uid, :uname) ON CONFLICT DO NOTHING"),
+                                {"uid": uid, "uname": uname},
+                            )
+                            conn.commit()
 
-                        # Log the conversation
-                        log_conversation(
-                            instagram_user_id=fid,
-                            instagram_username=username,
-                            event_type="new_follower",
-                            agent_action="sent_dm",
-                            agent_message=greeting,
-                        )
+                    await asyncio.to_thread(_db_insert_follower, fid, username)
 
-                        status = "sent" if dm_success else "failed"
-                        log_activity("info", f"New follower @{username} - DM {status}", greeting)
+                    # Generate and send greeting
+                    greeting = await asyncio.to_thread(generate_greeting, username)
+                    dm_success = await asyncio.to_thread(send_dm, client, [fid], greeting)
 
-                        # Small delay between DMs to avoid detection
-                        await asyncio.sleep(3)
+                    # Log the conversation
+                    await asyncio.to_thread(
+                        log_conversation,
+                        instagram_user_id=fid,
+                        instagram_username=username,
+                        event_type="new_follower",
+                        agent_action="sent_dm",
+                        agent_message=greeting,
+                    )
 
-                conn.commit()
+                    status = "sent" if dm_success else "failed"
+                    await asyncio.to_thread(
+                        log_activity, "info", f"New follower @{username} - DM {status}", greeting
+                    )
 
-                if new_count > 0:
-                    log_activity("info", f"Detected {new_count} new followers")
-                else:
-                    log_activity("info", "Follower check complete - no new followers")
+                    # Small delay between DMs to avoid detection
+                    await asyncio.sleep(3)
+
+            if new_count > 0:
+                await asyncio.to_thread(log_activity, "info", f"Detected {new_count} new followers")
+            else:
+                await asyncio.to_thread(log_activity, "info", "Follower check complete - no new followers")
 
         except Exception as e:
             self.errors += 1
             logger.error(f"Follower check error: {e}")
-            log_activity("error", f"Follower check error: {str(e)}")
+            await asyncio.to_thread(log_activity, "error", f"Follower check error: {str(e)}")
 
     async def _check_media_likes(self):
         """Detect new likes on posts and post contextual comments."""
         config = get_config()
         if config.get("api_mode") != "instagrapi":
-            log_activity("info", "Like check skipped - Graph API doesn't support liker list")
+            await asyncio.to_thread(log_activity, "info", "Like check skipped - Graph API doesn't support liker list")
             return
 
         try:
@@ -177,86 +196,96 @@ class InstagramMonitor:
             from database import engine
             from sqlalchemy import text
 
-            client = get_client(config["ig_username"], config["ig_password"])
-            account_info = get_account_info(client)
+            session_data = config.get("ig_session", "")
+            client = await asyncio.to_thread(
+                get_client, config["ig_username"], config["ig_password"], session_data
+            )
+            account_info = await asyncio.to_thread(get_account_info, client)
             user_id = account_info["user_id"]
 
             # Get recent media (limit to 5 to save API calls)
-            medias = get_user_medias(client, user_id, amount=5)
+            medias = await asyncio.to_thread(get_user_medias, client, user_id, 5)
 
-            with engine.connect() as conn:
-                total_new_likes = 0
+            total_new_likes = 0
 
-                for media in medias:
-                    media_id = media["media_id"]
-                    caption = media.get("caption", "")
+            for media in medias:
+                media_id = media["media_id"]
+                caption = media.get("caption", "")
 
-                    # Get likers for this media
-                    likers = get_media_likers(client, media_id)
+                # Get likers for this media
+                likers = await asyncio.to_thread(get_media_likers, client, media_id)
 
-                    # Get known likers for this media
-                    result = conn.execute(
-                        text("SELECT instagram_user_id FROM known_media_likes WHERE media_id = :mid"),
-                        {"mid": media_id},
-                    )
-                    known_liker_ids = {row[0] for row in result.fetchall()}
+                # Get known likers for this media
+                def _db_get_known_likers(mid):
+                    with engine.connect() as conn:
+                        result = conn.execute(
+                            text("SELECT instagram_user_id FROM known_media_likes WHERE media_id = :mid"),
+                            {"mid": mid},
+                        )
+                        return {row[0] for row in result.fetchall()}
 
-                    for liker in likers:
-                        lid = liker["user_id"]
-                        if lid not in known_liker_ids:
-                            # New like detected!
-                            liker_username = liker.get("username", "")
-                            total_new_likes += 1
-                            self.new_likes_detected += 1
+                known_liker_ids = await asyncio.to_thread(_db_get_known_likers, media_id)
 
-                            # Insert into known likes
-                            conn.execute(
-                                text(
-                                    "INSERT INTO known_media_likes (media_id, instagram_user_id, instagram_username) "
-                                    "VALUES (:mid, :uid, :uname) ON CONFLICT DO NOTHING"
-                                ),
-                                {"mid": media_id, "uid": lid, "uname": liker_username},
-                            )
+                for liker in likers:
+                    lid = liker["user_id"]
+                    if lid not in known_liker_ids:
+                        # New like detected!
+                        liker_username = liker.get("username", "")
+                        total_new_likes += 1
+                        self.new_likes_detected += 1
 
-                            # Generate contextual comment
-                            comment_text = generate_like_comment(liker_username, caption)
-                            comment_success = post_comment(client, media_id, comment_text)
+                        # Insert into known likes
+                        def _db_insert_like(mid, uid, uname):
+                            with engine.connect() as conn:
+                                conn.execute(
+                                    text(
+                                        "INSERT INTO known_media_likes (media_id, instagram_user_id, instagram_username) "
+                                        "VALUES (:mid, :uid, :uname) ON CONFLICT DO NOTHING"
+                                    ),
+                                    {"mid": mid, "uid": uid, "uname": uname},
+                                )
+                                conn.commit()
 
-                            # Log conversation
-                            log_conversation(
-                                instagram_user_id=lid,
-                                instagram_username=liker_username,
-                                event_type="photo_like",
-                                agent_action="posted_comment",
-                                agent_message=comment_text,
-                                trigger_media_id=media_id,
-                                trigger_media_caption=caption[:200] if caption else "",
-                            )
+                        await asyncio.to_thread(_db_insert_like, media_id, lid, liker_username)
 
-                            status = "posted" if comment_success else "failed"
-                            log_activity(
-                                "info",
-                                f"@{liker_username} liked media - comment {status}",
-                                comment_text,
-                            )
+                        # Generate contextual comment
+                        comment_text = await asyncio.to_thread(generate_like_comment, liker_username, caption)
+                        comment_success = await asyncio.to_thread(post_comment, client, media_id, comment_text)
 
-                            # Delay between comments
-                            await asyncio.sleep(5)
+                        # Log conversation
+                        await asyncio.to_thread(
+                            log_conversation,
+                            instagram_user_id=lid,
+                            instagram_username=liker_username,
+                            event_type="photo_like",
+                            agent_action="posted_comment",
+                            agent_message=comment_text,
+                            trigger_media_id=media_id,
+                            trigger_media_caption=caption[:200] if caption else "",
+                        )
 
-                    # Delay between media checks
-                    await asyncio.sleep(2)
+                        status = "posted" if comment_success else "failed"
+                        await asyncio.to_thread(
+                            log_activity, "info",
+                            f"@{liker_username} liked media - comment {status}",
+                            comment_text,
+                        )
 
-                conn.commit()
+                        # Delay between comments
+                        await asyncio.sleep(5)
 
-                if total_new_likes > 0:
-                    log_activity("info", f"Detected {total_new_likes} new likes across {len(medias)} posts")
-                else:
-                    log_activity("info", "Like check complete - no new likes")
+                # Delay between media checks
+                await asyncio.sleep(2)
+
+            if total_new_likes > 0:
+                await asyncio.to_thread(log_activity, "info", f"Detected {total_new_likes} new likes across {len(medias)} posts")
+            else:
+                await asyncio.to_thread(log_activity, "info", "Like check complete - no new likes")
 
         except Exception as e:
             self.errors += 1
             logger.error(f"Like check error: {e}")
-            log_activity("error", f"Like check error: {str(e)}")
+            await asyncio.to_thread(log_activity, "error", f"Like check error: {str(e)}")
 
 
 # Singleton monitor instance
