@@ -1,21 +1,22 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from models.schemas import SettingsUpdate, SettingsResponse
 from services.config_service import get_config_masked, update_config, get_config
+from auth import get_current_user
 
 router = APIRouter()
 
 
 @router.get("", response_model=SettingsResponse)
-def get_settings():
-    config = get_config_masked()
+def get_settings(user=Depends(get_current_user)):
+    config = get_config_masked(user["user_id"])
     if not config:
         raise HTTPException(status_code=404, detail="No configuration found")
     return SettingsResponse(**config)
 
 
 @router.put("")
-def update_settings(data: SettingsUpdate):
+def update_settings(data: SettingsUpdate, user=Depends(get_current_user)):
     try:
         updates = data.model_dump(exclude_none=True)
 
@@ -35,19 +36,19 @@ def update_settings(data: SettingsUpdate):
             if field in updates and isinstance(updates[field], (int, float)):
                 updates[field] = max(lo, min(hi, int(updates[field])))
 
-        update_config(updates)
+        update_config(user["user_id"], updates)
         # Reset instagrapi client if credentials changed
         if data.ig_username or data.ig_password:
             from instagram.instagrapi_client import reset_client
-            reset_client()
+            reset_client(user["user_id"])
         return {"status": "ok", "message": "Settings updated successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/test-connection")
-def test_connection():
-    config = get_config()
+def test_connection(user=Depends(get_current_user)):
+    config = get_config(user["user_id"])
     api_mode = config.get("api_mode", "instagrapi")
 
     try:
@@ -58,7 +59,7 @@ def test_connection():
             if not username or (not password and not session_data):
                 return {"success": False, "error": "Instagram username/password not configured. Use the local login script to generate a session."}
             from instagram.instagrapi_client import test_connection
-            return test_connection(username, password, session_data)
+            return test_connection(user["user_id"], username, password, session_data)
         else:
             token = config.get("access_token", "")
             ig_id = config.get("instagram_business_account_id", "")
@@ -77,15 +78,15 @@ class SessionImport(BaseModel):
 
 
 @router.post("/import-session")
-def import_session(data: SessionImport):
+def import_session(data: SessionImport, user=Depends(get_current_user)):
     """Import an Instagram session exported from local login script."""
     import json
     try:
         # Validate it's valid JSON
         json.loads(data.session_json)
-        update_config({"ig_session": data.session_json})
+        update_config(user["user_id"], {"ig_session": data.session_json})
         from instagram.instagrapi_client import reset_client
-        reset_client()
+        reset_client(user["user_id"])
         return {"status": "ok", "message": "Session imported successfully. Test the connection to verify."}
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON session data")

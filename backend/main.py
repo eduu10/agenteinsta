@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import init_db
-from instagram.monitor import monitor
+from instagram.monitor import monitor_manager
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -29,15 +29,14 @@ async def lifespan(app: FastAPI):
         logger.error(f"Database init failed (will retry on first request): {e}")
     yield
     # Shutdown
-    if monitor.is_running:
-        await monitor.stop()
+    await monitor_manager.stop_all()
     logger.info("Shutting down")
 
 
 app = FastAPI(
     title="Instagram AI Agent API",
     description="Backend API for the Instagram AI Agent with Agno",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -69,8 +68,12 @@ app.add_middleware(
 
 # Register routes
 from api.routes import health, agent, conversations, settings as settings_routes, monitor as monitor_routes
+from api.routes.auth import router as auth_router
+from api.routes.admin import router as admin_router
 
 app.include_router(health.router, prefix="/api", tags=["health"])
+app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
 app.include_router(conversations.router, prefix="/api/conversations", tags=["conversations"])
 app.include_router(settings_routes.router, prefix="/api/settings", tags=["settings"])

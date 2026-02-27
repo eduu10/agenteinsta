@@ -2,7 +2,7 @@ import asyncio
 import logging
 import random
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 
 from services.config_service import get_config, increment_daily_counter, reset_daily_counters_if_needed
 from services.conversation_service import log_conversation, log_activity
@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 class InstagramMonitor:
-    def __init__(self):
+    def __init__(self, user_id: str):
+        self.user_id = user_id
         self._task: Optional[asyncio.Task] = None
         self._running = False
         self.interval = 60
@@ -46,7 +47,7 @@ class InstagramMonitor:
         if self._running:
             return {"status": "already_running"}
 
-        config = get_config()
+        config = get_config(self.user_id)
         self.interval = config.get("polling_interval_seconds", 60)
 
         # Validate config
@@ -58,12 +59,15 @@ class InstagramMonitor:
             if not config.get("access_token"):
                 return {"status": "error", "message": "Instagram access token not configured"}
 
-        if not config.get("llm_api_key"):
-            return {"status": "error", "message": "LLM API key not configured"}
+        # LLM key comes from global config
+        from services.config_service import get_global_config
+        global_cfg = get_global_config()
+        if not global_cfg.get("llm_api_key"):
+            return {"status": "error", "message": "LLM API key not configured (contact admin)"}
 
         self._running = True
         self._task = asyncio.create_task(self._poll_loop())
-        await asyncio.to_thread(log_activity, "info", "Monitor started", f"Polling every {self.interval}s")
+        await asyncio.to_thread(log_activity, self.user_id, "info", "Monitor started", f"Polling every {self.interval}s")
         return {"status": "started"}
 
     async def stop(self):
@@ -75,7 +79,7 @@ class InstagramMonitor:
             except asyncio.CancelledError:
                 pass
             self._task = None
-        await asyncio.to_thread(log_activity, "info", "Monitor stopped")
+        await asyncio.to_thread(log_activity, self.user_id, "info", "Monitor stopped")
         return {"status": "stopped"}
 
     async def _poll_loop(self):
@@ -83,12 +87,12 @@ class InstagramMonitor:
         while self._running:
             try:
                 # Reset daily counters if 24h have passed
-                await asyncio.to_thread(reset_daily_counters_if_needed)
+                await asyncio.to_thread(reset_daily_counters_if_needed, self.user_id)
 
                 self.last_poll = datetime.utcnow().isoformat()
                 self.total_polls += 1
 
-                config = get_config()
+                config = get_config(self.user_id)
                 self.interval = config.get("polling_interval_seconds", 60)
 
                 # Alternate between checking followers and likes
@@ -97,21 +101,21 @@ class InstagramMonitor:
                         await self._check_new_followers()
                     else:
                         await asyncio.to_thread(
-                            log_activity, "info", "Follower check skipped - welcome DMs disabled"
+                            log_activity, self.user_id, "info", "Follower check skipped - welcome DMs disabled"
                         )
                 else:
                     if config.get("auto_comment_enabled", True):
                         await self._check_media_likes()
                     else:
                         await asyncio.to_thread(
-                            log_activity, "info", "Like check skipped - auto-comments disabled"
+                            log_activity, self.user_id, "info", "Like check skipped - auto-comments disabled"
                         )
 
             except Exception as e:
                 self.errors += 1
-                logger.error(f"Monitor poll error: {e}")
+                logger.error(f"[{self.user_id}] Monitor poll error: {e}")
                 try:
-                    await asyncio.to_thread(log_activity, "error", f"Poll error: {str(e)}")
+                    await asyncio.to_thread(log_activity, self.user_id, "error", f"Poll error: {str(e)}")
                 except Exception:
                     pass
 
@@ -119,9 +123,9 @@ class InstagramMonitor:
 
     async def _check_new_followers(self):
         """Detect new followers and send greeting DMs."""
-        config = get_config()
+        config = get_config(self.user_id)
         if config.get("api_mode") != "instagrapi":
-            await asyncio.to_thread(log_activity, "info", "Follower check skipped - Graph API doesn't support follower list")
+            await asyncio.to_thread(log_activity, self.user_id, "info", "Follower check skipped - Graph API doesn't support follower list")
             return
 
         try:
@@ -131,18 +135,21 @@ class InstagramMonitor:
 
             session_data = config.get("ig_session", "")
             client = await asyncio.to_thread(
-                get_client, config["ig_username"], config["ig_password"], session_data
+                get_client, self.user_id, config["ig_username"], config["ig_password"], session_data
             )
             account_info = await asyncio.to_thread(get_account_info, client)
-            user_id = account_info["user_id"]
+            ig_user_id = account_info["user_id"]
 
             # Use configurable limit
             followers_limit = config.get("followers_per_check", 20)
-            current_followers = await asyncio.to_thread(get_followers, client, user_id, followers_limit)
+            current_followers = await asyncio.to_thread(get_followers, client, ig_user_id, followers_limit)
 
             def _db_get_known_followers():
                 with engine.connect() as conn:
-                    result = conn.execute(text("SELECT instagram_user_id FROM known_followers"))
+                    result = conn.execute(
+                        text("SELECT instagram_user_id FROM known_followers WHERE user_id = :uid"),
+                        {"uid": self.user_id},
+                    )
                     return {row[0] for row in result.fetchall()}
 
             known_ids = await asyncio.to_thread(_db_get_known_followers)
@@ -163,8 +170,8 @@ class InstagramMonitor:
                     def _db_insert_follower(uid, uname):
                         with engine.connect() as conn:
                             conn.execute(
-                                text("INSERT INTO known_followers (instagram_user_id, instagram_username) VALUES (:uid, :uname) ON CONFLICT DO NOTHING"),
-                                {"uid": uid, "uname": uname},
+                                text("INSERT INTO known_followers (user_id, instagram_user_id, instagram_username) VALUES (:owner, :uid, :uname) ON CONFLICT DO NOTHING"),
+                                {"owner": self.user_id, "uid": uid, "uname": uname},
                             )
                             conn.commit()
 
@@ -174,7 +181,7 @@ class InstagramMonitor:
                     current_count = config.get("dms_sent_today", 0)
                     if current_count >= max_dms:
                         await asyncio.to_thread(
-                            log_activity, "warning",
+                            log_activity, self.user_id, "warning",
                             f"Daily DM limit reached ({max_dms}). Skipping DM to @{username}."
                         )
                         break
@@ -184,11 +191,12 @@ class InstagramMonitor:
                     dm_success = await asyncio.to_thread(send_dm, client, [fid], greeting)
 
                     if dm_success:
-                        await asyncio.to_thread(increment_daily_counter, "dms_sent_today")
+                        await asyncio.to_thread(increment_daily_counter, self.user_id, "dms_sent_today")
 
                     # Log the conversation
                     await asyncio.to_thread(
                         log_conversation,
+                        user_id=self.user_id,
                         instagram_user_id=fid,
                         instagram_username=username,
                         event_type="new_follower",
@@ -198,30 +206,30 @@ class InstagramMonitor:
 
                     status = "sent" if dm_success else "failed"
                     await asyncio.to_thread(
-                        log_activity, "info", f"New follower @{username} - DM {status}", greeting
+                        log_activity, self.user_id, "info", f"New follower @{username} - DM {status}", greeting
                     )
 
                     # Configurable delay with randomization
                     await self._delay(delay_dms, randomization)
 
                     # Re-read config for updated counter
-                    config = get_config()
+                    config = get_config(self.user_id)
 
             if new_count > 0:
-                await asyncio.to_thread(log_activity, "info", f"Detected {new_count} new followers")
+                await asyncio.to_thread(log_activity, self.user_id, "info", f"Detected {new_count} new followers")
             else:
-                await asyncio.to_thread(log_activity, "info", "Follower check complete - no new followers")
+                await asyncio.to_thread(log_activity, self.user_id, "info", "Follower check complete - no new followers")
 
         except Exception as e:
             self.errors += 1
-            logger.error(f"Follower check error: {e}")
-            await asyncio.to_thread(log_activity, "error", f"Follower check error: {str(e)}")
+            logger.error(f"[{self.user_id}] Follower check error: {e}")
+            await asyncio.to_thread(log_activity, self.user_id, "error", f"Follower check error: {str(e)}")
 
     async def _check_media_likes(self):
         """Detect new likes on posts and post contextual comments."""
-        config = get_config()
+        config = get_config(self.user_id)
         if config.get("api_mode") != "instagrapi":
-            await asyncio.to_thread(log_activity, "info", "Like check skipped - Graph API doesn't support liker list")
+            await asyncio.to_thread(log_activity, self.user_id, "info", "Like check skipped - Graph API doesn't support liker list")
             return
 
         try:
@@ -234,14 +242,14 @@ class InstagramMonitor:
 
             session_data = config.get("ig_session", "")
             client = await asyncio.to_thread(
-                get_client, config["ig_username"], config["ig_password"], session_data
+                get_client, self.user_id, config["ig_username"], config["ig_password"], session_data
             )
             account_info = await asyncio.to_thread(get_account_info, client)
-            user_id = account_info["user_id"]
+            ig_user_id = account_info["user_id"]
 
             # Use configurable limit
             media_limit = config.get("media_posts_per_check", 3)
-            medias = await asyncio.to_thread(get_user_medias, client, user_id, media_limit)
+            medias = await asyncio.to_thread(get_user_medias, client, ig_user_id, media_limit)
 
             max_comments = config.get("max_comments_per_day", 20)
             delay_comments = config.get("delay_between_comments", 60)
@@ -265,8 +273,8 @@ class InstagramMonitor:
                 def _db_get_known_likers(mid):
                     with engine.connect() as conn:
                         result = conn.execute(
-                            text("SELECT instagram_user_id FROM known_media_likes WHERE media_id = :mid"),
-                            {"mid": mid},
+                            text("SELECT instagram_user_id FROM known_media_likes WHERE user_id = :uid AND media_id = :mid"),
+                            {"uid": self.user_id, "mid": mid},
                         )
                         return {row[0] for row in result.fetchall()}
 
@@ -284,20 +292,20 @@ class InstagramMonitor:
                             with engine.connect() as conn:
                                 conn.execute(
                                     text(
-                                        "INSERT INTO known_media_likes (media_id, instagram_user_id, instagram_username) "
-                                        "VALUES (:mid, :uid, :uname) ON CONFLICT DO NOTHING"
+                                        "INSERT INTO known_media_likes (user_id, media_id, instagram_user_id, instagram_username) "
+                                        "VALUES (:owner, :mid, :uid, :uname) ON CONFLICT DO NOTHING"
                                     ),
-                                    {"mid": mid, "uid": uid, "uname": uname},
+                                    {"owner": self.user_id, "mid": mid, "uid": uid, "uname": uname},
                                 )
                                 conn.commit()
 
                         await asyncio.to_thread(_db_insert_like, media_id, lid, liker_username)
 
                         # Check daily comment limit
-                        current_config = get_config()
+                        current_config = get_config(self.user_id)
                         if current_config.get("comments_posted_today", 0) >= max_comments:
                             await asyncio.to_thread(
-                                log_activity, "warning",
+                                log_activity, self.user_id, "warning",
                                 f"Daily comment limit reached ({max_comments}). Stopping comments."
                             )
                             daily_limit_hit = True
@@ -308,11 +316,12 @@ class InstagramMonitor:
                         comment_success = await asyncio.to_thread(post_comment, client, media_id, comment_text)
 
                         if comment_success:
-                            await asyncio.to_thread(increment_daily_counter, "comments_posted_today")
+                            await asyncio.to_thread(increment_daily_counter, self.user_id, "comments_posted_today")
 
                         # Log conversation
                         await asyncio.to_thread(
                             log_conversation,
+                            user_id=self.user_id,
                             instagram_user_id=lid,
                             instagram_username=liker_username,
                             event_type="photo_like",
@@ -324,7 +333,7 @@ class InstagramMonitor:
 
                         status = "posted" if comment_success else "failed"
                         await asyncio.to_thread(
-                            log_activity, "info",
+                            log_activity, self.user_id, "info",
                             f"@{liker_username} liked media - comment {status}",
                             comment_text,
                         )
@@ -336,15 +345,65 @@ class InstagramMonitor:
                 await self._delay(delay_media, randomization)
 
             if total_new_likes > 0:
-                await asyncio.to_thread(log_activity, "info", f"Detected {total_new_likes} new likes across {len(medias)} posts")
+                await asyncio.to_thread(log_activity, self.user_id, "info", f"Detected {total_new_likes} new likes across {len(medias)} posts")
             else:
-                await asyncio.to_thread(log_activity, "info", "Like check complete - no new likes")
+                await asyncio.to_thread(log_activity, self.user_id, "info", "Like check complete - no new likes")
 
         except Exception as e:
             self.errors += 1
-            logger.error(f"Like check error: {e}")
-            await asyncio.to_thread(log_activity, "error", f"Like check error: {str(e)}")
+            logger.error(f"[{self.user_id}] Like check error: {e}")
+            await asyncio.to_thread(log_activity, self.user_id, "error", f"Like check error: {str(e)}")
 
 
-# Singleton monitor instance
-monitor = InstagramMonitor()
+class MonitorManager:
+    """Manages per-user monitor instances."""
+
+    def __init__(self):
+        self._monitors: Dict[str, InstagramMonitor] = {}
+
+    def get_or_create(self, user_id: str) -> InstagramMonitor:
+        if user_id not in self._monitors:
+            self._monitors[user_id] = InstagramMonitor(user_id)
+        return self._monitors[user_id]
+
+    def get_status(self, user_id: str) -> dict:
+        monitor = self._monitors.get(user_id)
+        if not monitor:
+            return {
+                "running": False,
+                "last_poll": None,
+                "total_polls": 0,
+                "new_followers_detected": 0,
+                "new_likes_detected": 0,
+                "errors": 0,
+            }
+        return monitor.get_status()
+
+    async def start(self, user_id: str) -> dict:
+        monitor = self.get_or_create(user_id)
+        return await monitor.start()
+
+    async def stop(self, user_id: str) -> dict:
+        monitor = self._monitors.get(user_id)
+        if not monitor:
+            return {"status": "not_running"}
+        return await monitor.stop()
+
+    async def stop_all(self):
+        """Stop all monitors (used on shutdown)."""
+        for user_id, monitor in list(self._monitors.items()):
+            if monitor.is_running:
+                await monitor.stop()
+
+    def get_all_statuses(self) -> list:
+        """Get status of all monitors (admin)."""
+        result = []
+        for user_id, monitor in self._monitors.items():
+            status = monitor.get_status()
+            status["user_id"] = user_id
+            result.append(status)
+        return result
+
+
+# Singleton manager instance
+monitor_manager = MonitorManager()

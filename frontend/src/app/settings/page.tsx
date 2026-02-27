@@ -15,9 +15,6 @@ export default function SettingsPage() {
     page_id: "",
     instagram_business_account_id: "",
     api_mode: "instagrapi",
-    llm_provider: "groq",
-    llm_api_key: "",
-    llm_model: "llama-3.3-70b-versatile",
     polling_interval_seconds: 60,
     // Bot control
     welcome_dm_enabled: true,
@@ -49,8 +46,6 @@ export default function SettingsPage() {
           page_id: settings.page_id || "",
           instagram_business_account_id: settings.instagram_business_account_id || "",
           api_mode: settings.api_mode || "instagrapi",
-          llm_provider: settings.llm_provider || "groq",
-          llm_model: settings.llm_model || "llama-3.3-70b-versatile",
           polling_interval_seconds: settings.polling_interval_seconds || 60,
           // Bot control
           welcome_dm_enabled: settings.welcome_dm_enabled ?? true,
@@ -123,22 +118,12 @@ export default function SettingsPage() {
       setMessage(null);
       try {
         const text = await file.text();
-        JSON.parse(text);
-        const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-        const resp = await fetch(`${API_URL}/api/settings/import-session`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session_json: text }),
-        });
-        if (resp.ok) {
-          setMessage({ type: "success", text: "Sessao importada com sucesso! Teste a conexao." });
-          setSessionActive(true);
-        } else {
-          const err = await resp.json();
-          setMessage({ type: "error", text: `Erro: ${err.detail}` });
-        }
+        JSON.parse(text); // validate JSON
+        await api.importSession(text);
+        setMessage({ type: "success", text: "Sessao importada com sucesso! Teste a conexao." });
+        setSessionActive(true);
       } catch {
-        setMessage({ type: "error", text: "Arquivo JSON invalido." });
+        setMessage({ type: "error", text: "Erro ao importar sessao." });
       } finally {
         setImporting(false);
       }
@@ -153,12 +138,6 @@ export default function SettingsPage() {
   function updateForm(field: string, value: string | number | boolean) {
     setForm((prev) => ({ ...prev, [field]: value }));
   }
-
-  const llmModels: Record<string, string[]> = {
-    groq: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
-    openai: ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
-    anthropic: ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
-  };
 
   return (
     <div>
@@ -281,47 +260,6 @@ export default function SettingsPage() {
             </div>
           </Section>
         )}
-
-        {/* LLM Config */}
-        <Section title="Configuracao do LLM (IA)">
-          <div className="space-y-4">
-            <div>
-              <label className="text-xs text-[var(--muted-foreground)] uppercase tracking-wider mb-2 block">Provider</label>
-              <select
-                value={form.llm_provider}
-                onChange={(e) => {
-                  updateForm("llm_provider", e.target.value);
-                  updateForm("llm_model", llmModels[e.target.value]?.[0] || "");
-                }}
-                className="w-full bg-[var(--secondary)] text-white rounded-lg px-4 py-3 text-sm border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
-              >
-                <option value="groq">Groq (Gratis)</option>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-              </select>
-            </div>
-            <SecretField
-              label="API Key"
-              value={form.llm_api_key}
-              onChange={(v) => updateForm("llm_api_key", v)}
-              show={showSecrets.llm_api_key}
-              onToggle={() => toggleSecret("llm_api_key")}
-              placeholder={form.llm_provider === "groq" ? "gsk_xxxx..." : "sk-xxxx..."}
-            />
-            <div>
-              <label className="text-xs text-[var(--muted-foreground)] uppercase tracking-wider mb-2 block">Modelo</label>
-              <select
-                value={form.llm_model}
-                onChange={(e) => updateForm("llm_model", e.target.value)}
-                className="w-full bg-[var(--secondary)] text-white rounded-lg px-4 py-3 text-sm border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
-              >
-                {(llmModels[form.llm_provider] || []).map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-        </Section>
 
         {/* Monitoring Config */}
         <Section title="Monitoramento">

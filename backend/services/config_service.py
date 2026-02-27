@@ -8,17 +8,53 @@ def mask_secret(value: str) -> str:
     return value[:4] + "****" + value[-4:]
 
 
-def get_config() -> dict:
+# ========== GLOBAL CONFIG (shared LLM) ==========
+
+def get_global_config() -> dict:
     with engine.connect() as conn:
-        result = conn.execute(text("SELECT * FROM instagram_config ORDER BY id LIMIT 1"))
+        result = conn.execute(text("SELECT * FROM global_config ORDER BY id LIMIT 1"))
         row = result.mappings().first()
         if not row:
             return {}
         return dict(row)
 
 
-def get_config_masked() -> dict:
-    config = get_config()
+def update_global_config(data: dict):
+    updates = {k: v for k, v in data.items() if v is not None}
+    if not updates:
+        return
+    set_clauses = []
+    params = {}
+    for key, value in updates.items():
+        set_clauses.append(f"{key} = :{key}")
+        params[key] = value
+    set_clauses.append("updated_at = NOW()")
+    set_sql = ", ".join(set_clauses)
+
+    with engine.connect() as conn:
+        conn.execute(
+            text(f"UPDATE global_config SET {set_sql} WHERE id = (SELECT id FROM global_config ORDER BY id LIMIT 1)"),
+            params,
+        )
+        conn.commit()
+
+
+# ========== PER-USER CONFIG ==========
+
+def get_config(user_id: str) -> dict:
+    with engine.connect() as conn:
+        result = conn.execute(
+            text("SELECT * FROM instagram_config WHERE user_id = :uid LIMIT 1"),
+            {"uid": user_id},
+        )
+        row = result.mappings().first()
+        if not row:
+            return {}
+        return dict(row)
+
+
+def get_config_masked(user_id: str) -> dict:
+    config = get_config(user_id)
     if not config:
         return {}
     return {
@@ -31,9 +67,6 @@ def get_config_masked() -> dict:
         "ig_password_masked": mask_secret(config.get("ig_password", "")),
         "ig_session_active": bool(config.get("ig_session", "")),
         "api_mode": config.get("api_mode", "instagrapi"),
-        "llm_provider": config.get("llm_provider", "groq"),
-        "llm_api_key_masked": mask_secret(config.get("llm_api_key", "")),
-        "llm_model": config.get("llm_model", "llama-3.3-70b-versatile"),
         "polling_interval_seconds": config.get("polling_interval_seconds", 60),
         "monitor_enabled": config.get("monitor_enabled", False),
         # Bot control
@@ -55,7 +88,7 @@ def get_config_masked() -> dict:
 VALID_COUNTERS = {"dms_sent_today", "comments_posted_today"}
 
 
-def increment_daily_counter(counter_name: str) -> int:
+def increment_daily_counter(user_id: str, counter_name: str) -> int:
     """Atomically increment a daily counter and return the new value."""
     if counter_name not in VALID_COUNTERS:
         raise ValueError(f"Invalid counter: {counter_name}")
@@ -64,15 +97,16 @@ def increment_daily_counter(counter_name: str) -> int:
             text(f"""
                 UPDATE instagram_config
                 SET {counter_name} = {counter_name} + 1, updated_at = NOW()
-                WHERE id = (SELECT id FROM instagram_config ORDER BY id LIMIT 1)
+                WHERE user_id = :uid
                 RETURNING {counter_name}
-            """)
+            """),
+            {"uid": user_id},
         )
         conn.commit()
         return result.scalar()
 
 
-def reset_daily_counters_if_needed() -> bool:
+def reset_daily_counters_if_needed(user_id: str) -> bool:
     """Reset daily counters if 24h have passed. Returns True if reset occurred."""
     with engine.connect() as conn:
         result = conn.execute(text("""
@@ -81,23 +115,23 @@ def reset_daily_counters_if_needed() -> bool:
                 comments_posted_today = 0,
                 daily_counters_reset_at = NOW(),
                 updated_at = NOW()
-            WHERE id = (SELECT id FROM instagram_config ORDER BY id LIMIT 1)
+            WHERE user_id = :uid
               AND daily_counters_reset_at < NOW() - INTERVAL '24 hours'
             RETURNING id
-        """))
+        """), {"uid": user_id})
         conn.commit()
         row = result.first()
         return row is not None
 
 
-def update_config(data: dict) -> dict:
+def update_config(user_id: str, data: dict) -> dict:
     # Filter out None values
     updates = {k: v for k, v in data.items() if v is not None}
     if not updates:
-        return get_config()
+        return get_config(user_id)
 
     set_clauses = []
-    params = {}
+    params = {"uid": user_id}
     for key, value in updates.items():
         set_clauses.append(f"{key} = :{key}")
         params[key] = value
@@ -107,9 +141,23 @@ def update_config(data: dict) -> dict:
 
     with engine.connect() as conn:
         conn.execute(
-            text(f"UPDATE instagram_config SET {set_sql} WHERE id = (SELECT id FROM instagram_config ORDER BY id LIMIT 1)"),
+            text(f"UPDATE instagram_config SET {set_sql} WHERE user_id = :uid"),
             params,
         )
         conn.commit()
 
-    return get_config()
+    return get_config(user_id)
+
+
+def create_config_for_user(user_id: str):
+    """Create default config for a new user."""
+    with engine.connect() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO instagram_config (user_id, api_mode)
+                VALUES (:uid, 'instagrapi')
+                ON CONFLICT (user_id) DO NOTHING
+            """),
+            {"uid": user_id},
+        )
+        conn.commit()

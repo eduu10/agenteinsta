@@ -9,6 +9,13 @@ export interface ChatResponse {
   session_id: string;
 }
 
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  is_admin: boolean;
+}
+
 export interface Settings {
   app_id: string;
   app_secret_masked: string;
@@ -17,10 +24,8 @@ export interface Settings {
   instagram_business_account_id: string;
   ig_username: string;
   ig_password_masked: string;
+  ig_session_active: boolean;
   api_mode: string;
-  llm_provider: string;
-  llm_api_key_masked: string;
-  llm_model: string;
   polling_interval_seconds: number;
   monitor_enabled: boolean;
   // Bot control
@@ -80,4 +85,17 @@ export interface ActivityLogItem {
   message: string;
   details: string;
   created_at: string;
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  name: string;
+  is_admin: boolean;
+  is_active: boolean;
+  created_at: string;
+  ig_username: string;
+  total_conversations: number;
+  total_dms: number;
+  total_comments: number;
 }

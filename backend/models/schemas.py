@@ -25,9 +25,6 @@ class SettingsUpdate(BaseModel):
     ig_username: Optional[str] = None
     ig_password: Optional[str] = None
     api_mode: Optional[str] = None
-    llm_provider: Optional[str] = None
-    llm_api_key: Optional[str] = None
-    llm_model: Optional[str] = None
     polling_interval_seconds: Optional[int] = None
     monitor_enabled: Optional[bool] = None
     # Bot control
@@ -53,9 +50,6 @@ class SettingsResponse(BaseModel):
     ig_password_masked: str
     ig_session_active: bool
     api_mode: str
-    llm_provider: str
-    llm_api_key_masked: str
-    llm_model: str
     polling_interval_seconds: int
     monitor_enabled: bool
     # Bot control

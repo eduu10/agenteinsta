@@ -6,69 +6,69 @@ from instagrapi.exceptions import LoginRequired, ChallengeRequired
 
 logger = logging.getLogger(__name__)
 
-# Singleton client instance
-_client: Optional[InstaClient] = None
-_logged_in = False
+# Per-user client instances keyed by user_id
+_clients: Dict[str, InstaClient] = {}
+_logged_in: Dict[str, bool] = {}
 
 
-def get_client(username: str, password: str, session_data: str = "") -> InstaClient:
-    """Get or create instagrapi client singleton.
+def get_client(user_id: str, username: str, password: str, session_data: str = "") -> InstaClient:
+    """Get or create instagrapi client for a specific user.
 
     If session_data is provided, load from session instead of login.
     """
-    global _client, _logged_in
+    if user_id in _clients and _logged_in.get(user_id):
+        return _clients[user_id]
 
-    if _client and _logged_in:
-        return _client
-
-    _client = InstaClient()
-    _client.delay_range = [2, 5]
+    client = InstaClient()
+    client.delay_range = [2, 5]
 
     # Try session-based auth first
     if session_data:
         try:
             session = json.loads(session_data)
-            _client.set_settings(session)
+            client.set_settings(session)
             # Re-login using session cookies (no password needed, avoids IP blocks)
-            _client.login(username, password)
-            _logged_in = True
-            logger.info(f"Logged in via saved session for @{username}")
-            return _client
+            client.login(username, password)
+            _clients[user_id] = client
+            _logged_in[user_id] = True
+            logger.info(f"[{user_id}] Logged in via saved session for @{username}")
+            return client
         except Exception as e:
-            logger.warning(f"Session login failed: {e}")
+            logger.warning(f"[{user_id}] Session login failed: {e}")
             # Try just using the session without re-login
             try:
-                _client2 = InstaClient()
-                _client2.delay_range = [2, 5]
+                client2 = InstaClient()
+                client2.delay_range = [2, 5]
                 session = json.loads(session_data)
-                _client2.set_settings(session)
+                client2.set_settings(session)
                 # Validate with a lightweight call
-                _client2.account_info()
-                _client = _client2
-                _logged_in = True
-                logger.info(f"Logged in via raw session for @{username}")
-                return _client
+                client2.account_info()
+                _clients[user_id] = client2
+                _logged_in[user_id] = True
+                logger.info(f"[{user_id}] Logged in via raw session for @{username}")
+                return client2
             except Exception as e2:
-                logger.warning(f"Raw session also failed: {e2}")
-                _client = InstaClient()
-                _client.delay_range = [2, 5]
+                logger.warning(f"[{user_id}] Raw session also failed: {e2}")
+                client = InstaClient()
+                client.delay_range = [2, 5]
 
     # Fallback to password login (may fail on datacenter IPs)
     try:
-        _client.login(username, password)
-        _logged_in = True
-        logger.info(f"Logged in as @{username}")
+        client.login(username, password)
+        _clients[user_id] = client
+        _logged_in[user_id] = True
+        logger.info(f"[{user_id}] Logged in as @{username}")
     except ChallengeRequired:
-        logger.error("Instagram challenge required - manual verification needed")
+        logger.error(f"[{user_id}] Instagram challenge required - manual verification needed")
         raise
     except LoginRequired:
-        logger.error("Login failed - check credentials")
+        logger.error(f"[{user_id}] Login failed - check credentials")
         raise
     except Exception as e:
-        logger.error(f"Login error: {e}")
+        logger.error(f"[{user_id}] Login error: {e}")
         raise
 
-    return _client
+    return client
 
 
 def export_session(client: InstaClient) -> str:
@@ -76,11 +76,10 @@ def export_session(client: InstaClient) -> str:
     return json.dumps(client.get_settings())
 
 
-def reset_client():
-    """Force re-login on next call."""
-    global _client, _logged_in
-    _client = None
-    _logged_in = False
+def reset_client(user_id: str):
+    """Force re-login on next call for a specific user."""
+    _clients.pop(user_id, None)
+    _logged_in.pop(user_id, None)
 
 
 def get_account_info(client: InstaClient) -> Dict:
@@ -178,11 +177,11 @@ def post_comment(client: InstaClient, media_id: str, text: str) -> bool:
         return False
 
 
-def test_connection(username: str, password: str, session_data: str = "") -> Dict:
+def test_connection(user_id: str, username: str, password: str, session_data: str = "") -> Dict:
     """Test Instagram connection with credentials or session."""
     try:
-        reset_client()
-        client = get_client(username, password, session_data)
+        reset_client(user_id)
+        client = get_client(user_id, username, password, session_data)
         info = get_account_info(client)
         return {"success": True, "account": info}
     except Exception as e:

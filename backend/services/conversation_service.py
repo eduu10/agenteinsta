@@ -3,6 +3,7 @@ from database import engine
 
 
 def log_conversation(
+    user_id: str,
     instagram_user_id: str,
     instagram_username: str,
     event_type: str,
@@ -16,12 +17,13 @@ def log_conversation(
         result = conn.execute(
             text("""
                 INSERT INTO conversations
-                (instagram_user_id, instagram_username, event_type, trigger_media_id,
+                (user_id, instagram_user_id, instagram_username, event_type, trigger_media_id,
                  trigger_media_caption, agent_action, agent_message, session_id)
-                VALUES (:uid, :uname, :etype, :mid, :mcap, :action, :msg, :sid)
+                VALUES (:user_id, :uid, :uname, :etype, :mid, :mcap, :action, :msg, :sid)
                 RETURNING id
             """),
             {
+                "user_id": user_id,
                 "uid": instagram_user_id,
                 "uname": instagram_username,
                 "etype": event_type,
@@ -36,15 +38,15 @@ def log_conversation(
         return result.scalar()
 
 
-def get_conversations(page: int = 1, limit: int = 20, event_type: str = None) -> dict:
+def get_conversations(user_id: str, page: int = 1, limit: int = 20, event_type: str = None) -> dict:
     offset = (page - 1) * limit
 
     with engine.connect() as conn:
-        where_clause = ""
-        params = {"limit": limit, "offset": offset}
+        where_clause = "WHERE user_id = :user_id"
+        params = {"user_id": user_id, "limit": limit, "offset": offset}
 
         if event_type:
-            where_clause = "WHERE event_type = :event_type"
+            where_clause += " AND event_type = :event_type"
             params["event_type"] = event_type
 
         count_result = conn.execute(
@@ -71,11 +73,11 @@ def get_conversations(page: int = 1, limit: int = 20, event_type: str = None) ->
         return {"items": rows, "total": total, "page": page, "limit": limit}
 
 
-def get_conversation_by_id(conv_id: int) -> dict:
+def get_conversation_by_id(user_id: str, conv_id: int) -> dict:
     with engine.connect() as conn:
         result = conn.execute(
-            text("SELECT * FROM conversations WHERE id = :id"),
-            {"id": conv_id},
+            text("SELECT * FROM conversations WHERE id = :id AND user_id = :user_id"),
+            {"id": conv_id, "user_id": user_id},
         )
         row = result.mappings().first()
         if not row:
@@ -86,17 +88,23 @@ def get_conversation_by_id(conv_id: int) -> dict:
         return data
 
 
-def get_stats() -> dict:
+def get_stats(user_id: str) -> dict:
     with engine.connect() as conn:
-        total = conn.execute(text("SELECT COUNT(*) FROM conversations")).scalar()
+        total = conn.execute(
+            text("SELECT COUNT(*) FROM conversations WHERE user_id = :uid"),
+            {"uid": user_id},
+        ).scalar()
         dms = conn.execute(
-            text("SELECT COUNT(*) FROM conversations WHERE agent_action = 'sent_dm'")
+            text("SELECT COUNT(*) FROM conversations WHERE user_id = :uid AND agent_action = 'sent_dm'"),
+            {"uid": user_id},
         ).scalar()
         comments = conn.execute(
-            text("SELECT COUNT(*) FROM conversations WHERE agent_action = 'posted_comment'")
+            text("SELECT COUNT(*) FROM conversations WHERE user_id = :uid AND agent_action = 'posted_comment'"),
+            {"uid": user_id},
         ).scalar()
         followers = conn.execute(
-            text("SELECT COUNT(*) FROM conversations WHERE event_type = 'new_follower'")
+            text("SELECT COUNT(*) FROM conversations WHERE user_id = :uid AND event_type = 'new_follower'"),
+            {"uid": user_id},
         ).scalar()
 
         return {
@@ -107,23 +115,23 @@ def get_stats() -> dict:
         }
 
 
-def log_activity(level: str, message: str, details: str = ""):
+def log_activity(user_id: str, level: str, message: str, details: str = ""):
     with engine.connect() as conn:
         conn.execute(
             text("""
-                INSERT INTO activity_log (level, message, details)
-                VALUES (:level, :message, :details)
+                INSERT INTO activity_log (user_id, level, message, details)
+                VALUES (:user_id, :level, :message, :details)
             """),
-            {"level": level, "message": message, "details": details},
+            {"user_id": user_id, "level": level, "message": message, "details": details},
         )
         conn.commit()
 
 
-def get_activity_log(limit: int = 50) -> list:
+def get_activity_log(user_id: str, limit: int = 50) -> list:
     with engine.connect() as conn:
         result = conn.execute(
-            text("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT :limit"),
-            {"limit": limit},
+            text("SELECT * FROM activity_log WHERE user_id = :uid ORDER BY created_at DESC LIMIT :limit"),
+            {"uid": user_id, "limit": limit},
         )
         rows = [dict(r) for r in result.mappings().all()]
         for row in rows:

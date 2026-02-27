@@ -6,7 +6,7 @@ from agent.prompts import AGENT_INSTRUCTIONS, CHAT_INSTRUCTIONS
 
 logger = logging.getLogger(__name__)
 
-# Cache agents
+# Cache agents (shared - LLM key is global)
 _chat_agent: Optional[Agent] = None
 _action_agent: Optional[Agent] = None
 _agent_config_hash: Optional[str] = None
@@ -32,9 +32,9 @@ def _get_model(provider: str, api_key: str, model_id: str):
 
 
 def _get_config_and_model():
-    """Load config and create model."""
-    from services.config_service import get_config
-    config = get_config()
+    """Load global config and create model."""
+    from services.config_service import get_global_config
+    config = get_global_config()
 
     provider = config.get("llm_provider", "groq")
     api_key = config.get("llm_api_key", "")
@@ -42,7 +42,7 @@ def _get_config_and_model():
 
     if not api_key:
         raise ValueError(
-            f"LLM API key not configured. Please set your {provider} API key in Settings."
+            f"LLM API key not configured. Admin needs to set the {provider} API key."
         )
 
     model = _get_model(provider, api_key, model_id)
@@ -54,8 +54,8 @@ def get_chat_agent(config: dict = None) -> Agent:
     global _chat_agent, _agent_config_hash
 
     if config is None:
-        from services.config_service import get_config
-        config = get_config()
+        from services.config_service import get_global_config
+        config = get_global_config()
 
     current_hash = _config_hash(config)
 
@@ -81,8 +81,8 @@ def get_action_agent(config: dict = None) -> Agent:
     global _action_agent
 
     if config is None:
-        from services.config_service import get_config
-        config = get_config()
+        from services.config_service import get_global_config
+        config = get_global_config()
 
     _, model, provider, model_id = _get_config_and_model()
 
