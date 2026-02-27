@@ -29,16 +29,31 @@ def get_client(username: str, password: str, session_data: str = "") -> InstaCli
         try:
             session = json.loads(session_data)
             _client.set_settings(session)
-            _client.get_timeline_feed()  # validate session is still active
+            # Re-login using session cookies (no password needed, avoids IP blocks)
+            _client.login(username, password)
             _logged_in = True
             logger.info(f"Logged in via saved session for @{username}")
             return _client
         except Exception as e:
-            logger.warning(f"Session login failed, will try password: {e}")
-            _client = InstaClient()
-            _client.delay_range = [2, 5]
+            logger.warning(f"Session login failed: {e}")
+            # Try just using the session without re-login
+            try:
+                _client2 = InstaClient()
+                _client2.delay_range = [2, 5]
+                session = json.loads(session_data)
+                _client2.set_settings(session)
+                # Validate with a lightweight call
+                _client2.account_info()
+                _client = _client2
+                _logged_in = True
+                logger.info(f"Logged in via raw session for @{username}")
+                return _client
+            except Exception as e2:
+                logger.warning(f"Raw session also failed: {e2}")
+                _client = InstaClient()
+                _client.delay_range = [2, 5]
 
-    # Fallback to password login
+    # Fallback to password login (may fail on datacenter IPs)
     try:
         _client.login(username, password)
         _logged_in = True
