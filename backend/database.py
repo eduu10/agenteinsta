@@ -1,13 +1,30 @@
 import logging
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import URL
 from sqlalchemy.orm import sessionmaker
 from config import settings
 
 logger = logging.getLogger(__name__)
 
-db_url = settings.get_database_url()
-logger.info(f"Connecting to DB host: {settings.db_host or 'from DATABASE_URL'}")
-engine = create_engine(db_url, pool_pre_ping=True, pool_size=5, max_overflow=10)
+
+def _build_engine():
+    if settings.db_password and settings.db_host:
+        url = URL.create(
+            drivername="postgresql",
+            username=settings.db_user,
+            password=settings.db_password,
+            host=settings.db_host,
+            port=int(settings.db_port),
+            database=settings.db_name,
+        )
+        logger.info(f"Connecting to DB host: {settings.db_host}:{settings.db_port}")
+    else:
+        url = settings.database_url
+        logger.info("Connecting to DB from DATABASE_URL")
+    return create_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=10)
+
+
+engine = _build_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

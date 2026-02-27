@@ -17,14 +17,15 @@ def health_check():
 def debug_db():
     from config import settings
     from database import engine, init_db
-    db_url = settings.get_database_url()
-    # Mask password in URL for display
-    masked_url = db_url
-    if "@" in db_url:
-        parts = db_url.split("@")
-        masked_url = "***@" + parts[-1]
 
-    result = {"db_url_masked": masked_url, "db_host": settings.db_host, "db_port": settings.db_port}
+    result = {
+        "db_host": settings.db_host,
+        "db_port": settings.db_port,
+        "db_user": settings.db_user,
+        "db_password_len": len(settings.db_password),
+        "db_password_preview": settings.db_password[:3] + "***" if settings.db_password else "",
+        "engine_url": str(engine.url).replace(str(engine.url.password or ""), "***"),
+    }
 
     try:
         init_db()
