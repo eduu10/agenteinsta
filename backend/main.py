@@ -18,8 +18,11 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Instagram AI Agent API...")
-    init_db()
-    logger.info("Database initialized")
+    try:
+        init_db()
+        logger.info("Database initialized")
+    except Exception as e:
+        logger.error(f"Database init failed (will retry on first request): {e}")
     yield
     # Shutdown
     if monitor.is_running:

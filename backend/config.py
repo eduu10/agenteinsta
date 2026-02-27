@@ -5,8 +5,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://postgres:password@localhost:5432/postgres"
     # Optional: separate DB credentials (used to build URL if provided)
     db_host: str = ""
-    db_port: str = "5432"
-    db_user: str = "postgres"
+    db_port: str = "6543"
+    db_user: str = "postgres.nfszvojzyswxjqybonab"
     db_password: str = ""
     db_name: str = "postgres"
     frontend_url: str = "http://localhost:3000"
