@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Header } from "@/components/layout/header";
 import { api } from "@/lib/api";
-import { Save, TestTube, Loader2, CheckCircle, XCircle, Eye, EyeOff } from "lucide-react";
+import { Save, TestTube, Loader2, CheckCircle, XCircle, Eye, EyeOff, Upload, KeyRound } from "lucide-react";
 
 export default function SettingsPage() {
   const [form, setForm] = useState({
@@ -22,6 +22,8 @@ export default function SettingsPage() {
   });
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [sessionActive, setSessionActive] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
 
@@ -39,6 +41,7 @@ export default function SettingsPage() {
           llm_model: settings.llm_model || "llama-3.3-70b-versatile",
           polling_interval_seconds: settings.polling_interval_seconds || 60,
         }));
+        setSessionActive(settings.ig_session_active || false);
       })
       .catch(() => {});
   }, []);
@@ -82,6 +85,40 @@ export default function SettingsPage() {
     } finally {
       setTesting(false);
     }
+  }
+
+  async function handleImportSession() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      setImporting(true);
+      setMessage(null);
+      try {
+        const text = await file.text();
+        JSON.parse(text); // validate JSON
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const resp = await fetch(`${API_URL}/api/settings/import-session`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_json: text }),
+        });
+        if (resp.ok) {
+          setMessage({ type: "success", text: "Sessao importada com sucesso! Teste a conexao." });
+          setSessionActive(true);
+        } else {
+          const err = await resp.json();
+          setMessage({ type: "error", text: `Erro: ${err.detail}` });
+        }
+      } catch {
+        setMessage({ type: "error", text: "Arquivo JSON invalido." });
+      } finally {
+        setImporting(false);
+      }
+    };
+    input.click();
   }
 
   function toggleSecret(field: string) {
@@ -165,6 +202,45 @@ export default function SettingsPage() {
                 onToggle={() => toggleSecret("ig_password")}
                 placeholder="sua_senha"
               />
+
+              {/* Session Status */}
+              <div className={`flex items-center gap-3 p-3 rounded-lg border ${
+                sessionActive
+                  ? "bg-green-500/10 border-green-500/30"
+                  : "bg-yellow-500/10 border-yellow-500/30"
+              }`}>
+                <KeyRound className={`w-4 h-4 ${sessionActive ? "text-green-400" : "text-yellow-400"}`} />
+                <div className="flex-1">
+                  <p className={`text-sm ${sessionActive ? "text-green-400" : "text-yellow-400"}`}>
+                    {sessionActive ? "Sessao ativa importada" : "Sem sessao - login direto do servidor pode ser bloqueado"}
+                  </p>
+                </div>
+                <button
+                  onClick={handleImportSession}
+                  disabled={importing}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--secondary)] text-xs text-[var(--secondary-foreground)] hover:text-white border border-[var(--border)] transition-colors"
+                >
+                  {importing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                  Importar Sessao
+                </button>
+              </div>
+
+              <div className="bg-[var(--secondary)] rounded-lg p-3 space-y-1">
+                <p className="text-xs text-[var(--muted-foreground)] font-medium">Como conectar ao Instagram:</p>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  1. No seu PC, execute: <code className="bg-black/30 px-1 rounded">python backend/login_local.py</code>
+                </p>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  2. Faca login com seu Instagram (usa o IP do seu PC, nao o do servidor)
+                </p>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  3. O script exporta a sessao e envia automaticamente para o servidor
+                </p>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  4. Ou clique em &quot;Importar Sessao&quot; acima e selecione o arquivo <code className="bg-black/30 px-1 rounded">ig_session.json</code>
+                </p>
+              </div>
+
               <p className="text-xs text-yellow-400/80">
                 Aviso: Usar a API nao-oficial pode resultar em ban da conta. Use com cautela.
               </p>

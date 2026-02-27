@@ -29,6 +29,7 @@ def get_config_masked() -> dict:
         "instagram_business_account_id": config.get("instagram_business_account_id", ""),
         "ig_username": config.get("ig_username", ""),
         "ig_password_masked": mask_secret(config.get("ig_password", "")),
+        "ig_session_active": bool(config.get("ig_session", "")),
         "api_mode": config.get("api_mode", "instagrapi"),
         "llm_provider": config.get("llm_provider", "groq"),
         "llm_api_key_masked": mask_secret(config.get("llm_api_key", "")),

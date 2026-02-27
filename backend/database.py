@@ -105,6 +105,14 @@ def init_db():
             )
         """))
 
+        # Add ig_session column if it doesn't exist (migration)
+        conn.execute(text("""
+            DO $$ BEGIN
+                ALTER TABLE instagram_config ADD COLUMN IF NOT EXISTS ig_session TEXT DEFAULT '';
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$;
+        """))
+
         # Insert default config row if none exists
         result = conn.execute(text("SELECT COUNT(*) FROM instagram_config"))
         count = result.scalar()

@@ -40,6 +40,7 @@ class SettingsResponse(BaseModel):
     instagram_business_account_id: str
     ig_username: str
     ig_password_masked: str
+    ig_session_active: bool
     api_mode: str
     llm_provider: str
     llm_api_key_masked: str

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from models.schemas import SettingsUpdate, SettingsResponse
 from services.config_service import get_config_masked, update_config, get_config
 
@@ -35,10 +36,11 @@ def test_connection():
         if api_mode == "instagrapi":
             username = config.get("ig_username", "")
             password = config.get("ig_password", "")
-            if not username or not password:
-                return {"success": False, "error": "Instagram username/password not configured"}
+            session_data = config.get("ig_session", "")
+            if not username or (not password and not session_data):
+                return {"success": False, "error": "Instagram username/password not configured. Use the local login script to generate a session."}
             from instagram.instagrapi_client import test_connection
-            return test_connection(username, password)
+            return test_connection(username, password, session_data)
         else:
             token = config.get("access_token", "")
             ig_id = config.get("instagram_business_account_id", "")
@@ -50,3 +52,24 @@ def test_connection():
             return client.test_connection()
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+class SessionImport(BaseModel):
+    session_json: str
+
+
+@router.post("/import-session")
+def import_session(data: SessionImport):
+    """Import an Instagram session exported from local login script."""
+    import json
+    try:
+        # Validate it's valid JSON
+        json.loads(data.session_json)
+        update_config({"ig_session": data.session_json})
+        from instagram.instagrapi_client import reset_client
+        reset_client()
+        return {"status": "ok", "message": "Session imported successfully. Test the connection to verify."}
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON session data")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

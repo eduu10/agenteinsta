@@ -12,9 +12,10 @@ def _get_instagrapi_client():
     config = get_config()
     username = config.get("ig_username", "")
     password = config.get("ig_password", "")
-    if not username or not password:
-        raise ValueError("Instagram username/password not configured")
-    return get_client(username, password)
+    session_data = config.get("ig_session", "")
+    if not username or (not password and not session_data):
+        raise ValueError("Instagram credentials not configured. Use the local login script to generate a session.")
+    return get_client(username, password, session_data)
 
 
 def _get_graph_api_client():
