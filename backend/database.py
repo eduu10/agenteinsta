@@ -1,25 +1,8 @@
-from urllib.parse import urlparse, urlunparse, quote
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from config import settings
 
-
-def _fix_database_url(url: str) -> str:
-    """URL-encode password if it contains special characters like @ or []."""
-    try:
-        parsed = urlparse(url)
-        if parsed.password and any(c in parsed.password for c in "[]@"):
-            encoded_password = quote(parsed.password, safe="")
-            netloc = f"{parsed.username}:{encoded_password}@{parsed.hostname}"
-            if parsed.port:
-                netloc += f":{parsed.port}"
-            return urlunparse(parsed._replace(netloc=netloc))
-    except Exception:
-        pass
-    return url
-
-
-engine = create_engine(_fix_database_url(settings.database_url), pool_pre_ping=True)
+engine = create_engine(settings.get_database_url(), pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
