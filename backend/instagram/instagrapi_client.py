@@ -70,14 +70,25 @@ def reset_client():
 
 def get_account_info(client: InstaClient) -> Dict:
     """Get info about the logged-in account."""
-    user = client.account_info()
-    return {
-        "user_id": str(user.pk),
-        "username": user.username,
-        "full_name": user.full_name,
-        "follower_count": user.follower_count,
-        "media_count": user.media_count,
-    }
+    account = client.account_info()
+    user_id = str(account.pk)
+    try:
+        user = client.user_info(account.pk)
+        return {
+            "user_id": user_id,
+            "username": user.username,
+            "full_name": user.full_name,
+            "follower_count": user.follower_count,
+            "media_count": user.media_count,
+        }
+    except Exception:
+        return {
+            "user_id": user_id,
+            "username": account.username,
+            "full_name": account.full_name,
+            "follower_count": 0,
+            "media_count": 0,
+        }
 
 
 def get_followers(client: InstaClient, user_id: str, amount: int = 50) -> List[Dict]:
