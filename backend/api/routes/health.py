@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from instagram.monitor import monitor
+from instagram.monitor import monitor_manager
 
 router = APIRouter()
 
@@ -8,5 +8,5 @@ router = APIRouter()
 def health_check():
     return {
         "status": "ok",
-        "monitor_running": monitor.is_running,
+        "active_monitors": len([s for s in monitor_manager._monitors.values() if s.is_running]),
     }
