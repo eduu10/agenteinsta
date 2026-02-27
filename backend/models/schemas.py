@@ -30,6 +30,17 @@ class SettingsUpdate(BaseModel):
     llm_model: Optional[str] = None
     polling_interval_seconds: Optional[int] = None
     monitor_enabled: Optional[bool] = None
+    # Bot control
+    welcome_dm_enabled: Optional[bool] = None
+    auto_comment_enabled: Optional[bool] = None
+    max_dms_per_day: Optional[int] = None
+    max_comments_per_day: Optional[int] = None
+    delay_between_dms: Optional[int] = None
+    delay_between_comments: Optional[int] = None
+    delay_between_media_checks: Optional[int] = None
+    followers_per_check: Optional[int] = None
+    media_posts_per_check: Optional[int] = None
+    delay_randomization_max: Optional[int] = None
 
 
 class SettingsResponse(BaseModel):
@@ -47,6 +58,19 @@ class SettingsResponse(BaseModel):
     llm_model: str
     polling_interval_seconds: int
     monitor_enabled: bool
+    # Bot control
+    welcome_dm_enabled: bool = True
+    auto_comment_enabled: bool = True
+    max_dms_per_day: int = 20
+    max_comments_per_day: int = 20
+    delay_between_dms: int = 45
+    delay_between_comments: int = 60
+    delay_between_media_checks: int = 5
+    followers_per_check: int = 20
+    media_posts_per_check: int = 3
+    delay_randomization_max: int = 30
+    dms_sent_today: int = 0
+    comments_posted_today: int = 0
 
 
 # --- Conversations ---

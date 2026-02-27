@@ -17,7 +17,25 @@ def get_settings():
 @router.put("")
 def update_settings(data: SettingsUpdate):
     try:
-        update_config(data.model_dump(exclude_none=True))
+        updates = data.model_dump(exclude_none=True)
+
+        # Clamp bot control values to safe ranges
+        clamp_rules = {
+            "max_dms_per_day": (1, 50),
+            "max_comments_per_day": (1, 50),
+            "delay_between_dms": (10, 300),
+            "delay_between_comments": (10, 300),
+            "delay_between_media_checks": (2, 30),
+            "followers_per_check": (5, 50),
+            "media_posts_per_check": (1, 10),
+            "delay_randomization_max": (0, 120),
+            "polling_interval_seconds": (30, 300),
+        }
+        for field, (lo, hi) in clamp_rules.items():
+            if field in updates and isinstance(updates[field], (int, float)):
+                updates[field] = max(lo, min(hi, int(updates[field])))
+
+        update_config(updates)
         # Reset instagrapi client if credentials changed
         if data.ig_username or data.ig_password:
             from instagram.instagrapi_client import reset_client

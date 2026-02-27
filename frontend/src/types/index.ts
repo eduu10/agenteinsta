@@ -23,6 +23,19 @@ export interface Settings {
   llm_model: string;
   polling_interval_seconds: number;
   monitor_enabled: boolean;
+  // Bot control
+  welcome_dm_enabled: boolean;
+  auto_comment_enabled: boolean;
+  max_dms_per_day: number;
+  max_comments_per_day: number;
+  delay_between_dms: number;
+  delay_between_comments: number;
+  delay_between_media_checks: number;
+  followers_per_check: number;
+  media_posts_per_check: number;
+  delay_randomization_max: number;
+  dms_sent_today: number;
+  comments_posted_today: number;
 }
 
 export interface ConversationItem {

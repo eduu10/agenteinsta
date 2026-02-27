@@ -113,6 +113,30 @@ def init_db():
             END $$;
         """))
 
+        # Bot control settings migration
+        bot_control_columns = [
+            ("welcome_dm_enabled", "BOOLEAN DEFAULT true"),
+            ("auto_comment_enabled", "BOOLEAN DEFAULT true"),
+            ("max_dms_per_day", "INTEGER DEFAULT 20"),
+            ("max_comments_per_day", "INTEGER DEFAULT 20"),
+            ("delay_between_dms", "INTEGER DEFAULT 45"),
+            ("delay_between_comments", "INTEGER DEFAULT 60"),
+            ("delay_between_media_checks", "INTEGER DEFAULT 5"),
+            ("followers_per_check", "INTEGER DEFAULT 20"),
+            ("media_posts_per_check", "INTEGER DEFAULT 3"),
+            ("delay_randomization_max", "INTEGER DEFAULT 30"),
+            ("dms_sent_today", "INTEGER DEFAULT 0"),
+            ("comments_posted_today", "INTEGER DEFAULT 0"),
+            ("daily_counters_reset_at", "TIMESTAMPTZ DEFAULT NOW()"),
+        ]
+        for col_name, col_def in bot_control_columns:
+            conn.execute(text(f"""
+                DO $$ BEGIN
+                    ALTER TABLE instagram_config ADD COLUMN IF NOT EXISTS {col_name} {col_def};
+                EXCEPTION WHEN duplicate_column THEN NULL;
+                END $$;
+            """))
+
         # Insert default config row if none exists
         result = conn.execute(text("SELECT COUNT(*) FROM instagram_config"))
         count = result.scalar()
