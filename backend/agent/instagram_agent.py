@@ -62,8 +62,6 @@ def get_agent(config: dict = None) -> Agent:
         tools=[InstagramToolkit()],
         instructions=AGENT_INSTRUCTIONS,
         markdown=True,
-        show_tool_calls=True,
-        add_datetime_to_instructions=True,
     )
 
     _agent_config_hash = current_hash
