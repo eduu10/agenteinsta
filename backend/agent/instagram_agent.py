@@ -2,8 +2,6 @@ import uuid
 import logging
 from typing import Optional
 from agno.agent import Agent
-from agno.models.groq import Groq
-from agno.models.openai import OpenAIChat
 from agent.tools.instagram_tools import InstagramToolkit
 from agent.prompts import AGENT_INSTRUCTIONS
 
@@ -23,11 +21,13 @@ def _config_hash(config: dict) -> str:
 def _get_model(provider: str, api_key: str, model_id: str):
     """Create the LLM model based on provider."""
     if provider == "groq":
+        from agno.models.groq import Groq
         return Groq(id=model_id, api_key=api_key)
     elif provider == "anthropic":
         from agno.models.anthropic import Claude
         return Claude(id=model_id, api_key=api_key)
     else:
+        from agno.models.openai import OpenAIChat
         return OpenAIChat(id=model_id, api_key=api_key)
 
 
