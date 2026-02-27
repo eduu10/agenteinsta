@@ -84,25 +84,30 @@ export default function MonitorPage() {
               >
                 <RefreshCw className="w-4 h-4" />
               </button>
-              {status?.running ? (
-                <button
-                  onClick={handleStop}
-                  disabled={actionLoading}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 transition-colors text-sm"
-                >
-                  {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
-                  Parar
-                </button>
-              ) : (
-                <button
-                  onClick={handleStart}
-                  disabled={actionLoading}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30 transition-colors text-sm"
-                >
-                  {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                  Iniciar
-                </button>
-              )}
+              <button
+                onClick={handleStart}
+                disabled={actionLoading || status?.running}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm transition-colors ${
+                  status?.running
+                    ? "bg-green-500/5 text-green-400/40 border-green-500/10 cursor-not-allowed"
+                    : "bg-green-500/20 text-green-400 border-green-500/30 hover:bg-green-500/30"
+                }`}
+              >
+                {actionLoading && !status?.running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                Iniciar
+              </button>
+              <button
+                onClick={handleStop}
+                disabled={actionLoading || !status?.running}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm transition-colors ${
+                  !status?.running
+                    ? "bg-red-500/5 text-red-400/40 border-red-500/10 cursor-not-allowed"
+                    : "bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30"
+                }`}
+              >
+                {actionLoading && status?.running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+                Parar
+              </button>
             </div>
           </div>
 
