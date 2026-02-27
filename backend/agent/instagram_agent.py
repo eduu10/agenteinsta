@@ -2,13 +2,13 @@ import uuid
 import logging
 from typing import Optional
 from agno.agent import Agent
-from agent.tools.instagram_tools import InstagramToolkit
-from agent.prompts import AGENT_INSTRUCTIONS
+from agent.prompts import AGENT_INSTRUCTIONS, CHAT_INSTRUCTIONS
 
 logger = logging.getLogger(__name__)
 
-# Cache the agent instance
-_agent: Optional[Agent] = None
+# Cache agents
+_chat_agent: Optional[Agent] = None
+_action_agent: Optional[Agent] = None
 _agent_config_hash: Optional[str] = None
 
 
@@ -31,19 +31,10 @@ def _get_model(provider: str, api_key: str, model_id: str):
         return OpenAIChat(id=model_id, api_key=api_key)
 
 
-def get_agent(config: dict = None) -> Agent:
-    """Get or create the Agno Agent instance."""
-    global _agent, _agent_config_hash
-
-    if config is None:
-        from services.config_service import get_config
-        config = get_config()
-
-    current_hash = _config_hash(config)
-
-    # Return cached agent if config hasn't changed
-    if _agent and _agent_config_hash == current_hash:
-        return _agent
+def _get_config_and_model():
+    """Load config and create model."""
+    from services.config_service import get_config
+    config = get_config()
 
     provider = config.get("llm_provider", "groq")
     api_key = config.get("llm_api_key", "")
@@ -55,26 +46,63 @@ def get_agent(config: dict = None) -> Agent:
         )
 
     model = _get_model(provider, api_key, model_id)
+    return config, model, provider, model_id
 
-    _agent = Agent(
+
+def get_chat_agent(config: dict = None) -> Agent:
+    """Get or create the chat Agent (no tools, for dashboard conversation)."""
+    global _chat_agent, _agent_config_hash
+
+    if config is None:
+        from services.config_service import get_config
+        config = get_config()
+
+    current_hash = _config_hash(config)
+
+    if _chat_agent and _agent_config_hash == current_hash:
+        return _chat_agent
+
+    _, model, provider, model_id = _get_config_and_model()
+
+    _chat_agent = Agent(
         name="Instagram AI Agent",
         model=model,
-        tools=[InstagramToolkit()],
-        instructions=AGENT_INSTRUCTIONS,
+        instructions=CHAT_INSTRUCTIONS,
         markdown=True,
     )
 
     _agent_config_hash = current_hash
-    logger.info(f"Agent created with {provider}/{model_id}")
-    return _agent
+    logger.info(f"Chat agent created with {provider}/{model_id}")
+    return _chat_agent
+
+
+def get_action_agent(config: dict = None) -> Agent:
+    """Get or create the action Agent (with tools, for internal monitor use)."""
+    global _action_agent
+
+    if config is None:
+        from services.config_service import get_config
+        config = get_config()
+
+    _, model, provider, model_id = _get_config_and_model()
+
+    _action_agent = Agent(
+        name="Instagram AI Agent",
+        model=model,
+        instructions=AGENT_INSTRUCTIONS,
+        markdown=True,
+    )
+
+    logger.info(f"Action agent created with {provider}/{model_id}")
+    return _action_agent
 
 
 def chat_with_agent(message: str, session_id: str = None) -> dict:
-    """Send a message to the agent and get a response."""
+    """Send a message to the chat agent and get a response."""
     if not session_id:
         session_id = str(uuid.uuid4())
 
-    agent = get_agent()
+    agent = get_chat_agent()
 
     response = agent.run(message, session_id=session_id)
 
@@ -91,7 +119,7 @@ def chat_with_agent(message: str, session_id: str = None) -> dict:
 def generate_greeting(username: str) -> str:
     """Use the agent to generate a personalized greeting for a new follower."""
     try:
-        agent = get_agent()
+        agent = get_action_agent()
         response = agent.run(
             f"Gere uma mensagem curta e amigavel de boas-vindas para o novo seguidor @{username}. "
             f"A mensagem deve ser calorosa, em portugues brasileiro, e ter no maximo 2 frases. "
@@ -111,7 +139,7 @@ def generate_greeting(username: str) -> str:
 def generate_like_comment(username: str, media_caption: str) -> str:
     """Use the agent to generate a contextual comment about a liked photo."""
     try:
-        agent = get_agent()
+        agent = get_action_agent()
         caption_info = f" com a legenda: '{media_caption}'" if media_caption else ""
         response = agent.run(
             f"@{username} curtiu uma postagem nossa{caption_info}. "
