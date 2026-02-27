@@ -1,6 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
@@ -13,13 +13,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_db_initialized = False
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _db_initialized
     # Startup
     logger.info("Starting Instagram AI Agent API...")
     try:
         init_db()
+        _db_initialized = True
         logger.info("Database initialized")
     except Exception as e:
         logger.error(f"Database init failed (will retry on first request): {e}")
@@ -36,6 +40,19 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+@app.middleware("http")
+async def ensure_db_initialized(request: Request, call_next):
+    global _db_initialized
+    if not _db_initialized:
+        try:
+            init_db()
+            _db_initialized = True
+            logger.info("Database initialized on first request")
+        except Exception as e:
+            logger.error(f"Database init retry failed: {e}")
+    return await call_next(request)
+
 
 # CORS
 app.add_middleware(
