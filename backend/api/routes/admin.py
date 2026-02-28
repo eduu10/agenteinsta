@@ -1,16 +1,32 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
+from pydantic import BaseModel
 from auth import get_current_user
-from services.user_service import list_users, get_user
+from services.user_service import list_users, get_user, create_user
 from services.conversation_service import get_activity_log
 from services.config_service import get_global_config, update_global_config
 
 router = APIRouter()
 
 
+class CreateUserRequest(BaseModel):
+    email: str
+    password: str
+    name: str = ""
+
+
 def require_admin(user=Depends(get_current_user)):
     if not user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
+
+
+@router.post("/users")
+def admin_create_user(data: CreateUserRequest, user=Depends(require_admin)):
+    try:
+        new_user = create_user(data.email, data.password, data.name)
+        return {"status": "ok", "user": new_user}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/users")

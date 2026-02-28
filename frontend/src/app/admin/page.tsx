@@ -20,6 +20,7 @@ import {
   Eye,
   EyeOff,
   Shield,
+  UserPlus,
 } from "lucide-react";
 
 export default function AdminPage() {
@@ -38,6 +39,13 @@ export default function AdminPage() {
   const [showKey, setShowKey] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [configMessage, setConfigMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Create user form
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserPassword, setNewUserPassword] = useState("");
+  const [newUserName, setNewUserName] = useState("");
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [createUserMessage, setCreateUserMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     if (user && !user.is_admin) {
@@ -102,6 +110,25 @@ export default function AdminPage() {
     }
   }
 
+  async function handleCreateUser(e: React.FormEvent) {
+    e.preventDefault();
+    setCreatingUser(true);
+    setCreateUserMessage(null);
+    try {
+      await api.adminCreateUser(newUserEmail, newUserPassword, newUserName);
+      setCreateUserMessage({ type: "success", text: `Usuario ${newUserEmail} criado com sucesso!` });
+      setNewUserEmail("");
+      setNewUserPassword("");
+      setNewUserName("");
+      loadData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Erro ao criar usuario";
+      setCreateUserMessage({ type: "error", text: msg });
+    } finally {
+      setCreatingUser(false);
+    }
+  }
+
   function getMonitorStatus(userId: string): string {
     const m = monitors.find((m) => (m as { user_id?: string }).user_id === userId);
     return m && (m as { running?: boolean }).running ? "Ativo" : "Parado";
@@ -140,6 +167,71 @@ export default function AdminPage() {
             value={users.reduce((acc, u) => acc + (u.total_comments || 0), 0)}
             color="pink"
           />
+        </div>
+
+        {/* Create User */}
+        <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] p-6">
+          <h3 className="text-base font-semibold text-white mb-4 flex items-center gap-2">
+            <UserPlus className="w-5 h-5 text-green-400" />
+            Criar Novo Usuario
+          </h3>
+
+          {createUserMessage && (
+            <div className={`flex items-center gap-2 p-3 rounded-lg border mb-4 text-sm ${
+              createUserMessage.type === "success"
+                ? "bg-green-500/10 border-green-500/30 text-green-400"
+                : "bg-red-500/10 border-red-500/30 text-red-400"
+            }`}>
+              {createUserMessage.type === "success" ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+              {createUserMessage.text}
+            </div>
+          )}
+
+          <form onSubmit={handleCreateUser}>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <label className="text-xs text-[var(--muted-foreground)] uppercase tracking-wider mb-2 block">Nome</label>
+                <input
+                  type="text"
+                  value={newUserName}
+                  onChange={(e) => setNewUserName(e.target.value)}
+                  placeholder="Nome do usuario"
+                  className="w-full bg-[var(--secondary)] text-white rounded-lg px-4 py-3 text-sm border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)] placeholder:text-[var(--muted-foreground)]"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-[var(--muted-foreground)] uppercase tracking-wider mb-2 block">Email</label>
+                <input
+                  type="email"
+                  value={newUserEmail}
+                  onChange={(e) => setNewUserEmail(e.target.value)}
+                  placeholder="email@exemplo.com"
+                  required
+                  className="w-full bg-[var(--secondary)] text-white rounded-lg px-4 py-3 text-sm border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)] placeholder:text-[var(--muted-foreground)]"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-[var(--muted-foreground)] uppercase tracking-wider mb-2 block">Senha</label>
+                <input
+                  type="password"
+                  value={newUserPassword}
+                  onChange={(e) => setNewUserPassword(e.target.value)}
+                  placeholder="Minimo 6 caracteres"
+                  required
+                  minLength={6}
+                  className="w-full bg-[var(--secondary)] text-white rounded-lg px-4 py-3 text-sm border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)] placeholder:text-[var(--muted-foreground)]"
+                />
+              </div>
+            </div>
+            <button
+              type="submit"
+              disabled={creatingUser}
+              className="mt-4 flex items-center gap-2 px-6 py-2.5 rounded-xl bg-green-600 text-white font-medium text-sm hover:opacity-90 disabled:opacity-50"
+            >
+              {creatingUser ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+              Criar Usuario
+            </button>
+          </form>
         </div>
 
         {/* Global LLM Config */}

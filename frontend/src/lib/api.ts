@@ -45,12 +45,6 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
 
-  register: (email: string, password: string, name: string) =>
-    fetchApi("/api/auth/register", {
-      method: "POST",
-      body: JSON.stringify({ email, password, name }),
-    }),
-
   getMe: () => fetchApi("/api/auth/me"),
 
   // Health
@@ -105,6 +99,12 @@ export const api = {
     fetchApi(`/api/monitor/activity-log?limit=${limit}`),
 
   // Admin
+  adminCreateUser: (email: string, password: string, name: string) =>
+    fetchApi("/api/admin/users", {
+      method: "POST",
+      body: JSON.stringify({ email, password, name }),
+    }),
+
   getUsers: () => fetchApi("/api/admin/users"),
 
   getUserActivity: (userId: string, limit = 50) =>
